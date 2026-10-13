@@ -101,5 +101,17 @@ class TestResolve(unittest.TestCase):
 		self.assertEqual(J.resolve(KEY["r"], False, J.JONG, (J.CHO, "ㄹ"))[0], J.INSERT)
 
 
+class TestCombineWindow(unittest.TestCase):
+
+	def test_fast_second_key_combines(self):
+		self.assertTrue(J.withinCombineWindow(10.0, 10.39))
+
+	def test_slow_second_key_does_not_combine(self):
+		self.assertFalse(J.withinCombineWindow(10.0, 10.41))
+
+	def test_no_previous_key(self):
+		self.assertFalse(J.withinCombineWindow(None, 10.0))
+
+
 if __name__ == "__main__":
 	unittest.main()

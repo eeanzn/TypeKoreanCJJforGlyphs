@@ -7,8 +7,8 @@
 #   Glyphs 3 plugin: a typing mode for the Edit View (Text tool) that inserts positional
 #   Hangul jamo glyphs — Choseong / Jungseong / Jongseong — instead of compatibility jamo.
 #
-#   Edit → Type Hangul Jamo (⌃T)                  toggle the typing mode
-#   Edit → Consonants as Jongseong (⌃⇧T)          consonant keys insert Jongseong instead of Choseong
+#   Edit → Type Hangul Jamo (⌃R) cycles: Off (normal typing) → Choseong → Jongseong → Off
+#   Vowels always insert Jungseong. Compound vowels / finals combine when typed within 0.4 s.
 #
 #   Copyright 2026 HyunJun Lee
 #   Apache License 2.0
@@ -18,18 +18,27 @@
 from __future__ import division, print_function, unicode_literals
 import os
 import sys
+import traceback
 import objc
 from GlyphsApp import Glyphs, EDIT_MENU
 from GlyphsApp.plugins import GeneralPlugin
 from AppKit import (
 	NSMenuItem, NSOnState, NSOffState, NSEvent, NSBeep,
-	NSKeyDownMask, NSLeftMouseDownMask, NSLeftMouseDown, NSControlKeyMask, NSShiftKeyMask, NSCommandKeyMask, NSAlternateKeyMask,
+	NSKeyDownMask, NSLeftMouseDownMask, NSLeftMouseDown,
+	NSControlKeyMask, NSShiftKeyMask, NSCommandKeyMask, NSAlternateKeyMask,
 )
+from Foundation import NSMakeRange, NSNotFound
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jamo_logic  # noqa: E402
 
-CONSONANT_ROLE_KEY = "com.eeanzn.TypeKoreanCJJ.consonantRole"
+OFF = "off"
+MODES = (OFF, jamo_logic.CHO, jamo_logic.JONG)
+
+
+def log(message):
+	# print() shows up in Window → Macro Panel (logToConsole only goes to Console.app)
+	print("TypeKoreanCJJ: %s" % message)
 
 
 class TypeKoreanCJJ(GeneralPlugin):
@@ -40,86 +49,55 @@ class TypeKoreanCJJ(GeneralPlugin):
 			"en": "Type Hangul Jamo",
 			"ko": "한글 초·중·종성 입력",
 		})
-		self.jongName = Glyphs.localize({
-			"en": "Consonants as Jongseong",
-			"ko": "자음을 종성으로 입력",
-		})
+		self.modeNames = {
+			OFF: Glyphs.localize({"en": "Off (normal typing)", "ko": "꺼짐 (기본 타이핑)"}),
+			jamo_logic.CHO: Glyphs.localize({"en": "Choseong", "ko": "초성"}),
+			jamo_logic.JONG: Glyphs.localize({"en": "Jongseong", "ko": "종성"}),
+		}
 
 	@objc.python_method
 	def start(self):
-		self.enabled = False
+		self.mode = OFF
 		self.monitor = None
-		self.previous = None
+		self.resetCombine()
 		try:
-			toggleItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+			menuItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
 				self.name,
-				self.toggleTyping_,
-				"t"
+				self.cycleMode_,
+				"r"
 			)
-			toggleItem.setKeyEquivalentModifierMask_(NSControlKeyMask)
-			toggleItem.setTarget_(self)
-
-			jongItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-				self.jongName,
-				self.toggleConsonantRole_,
-				"t"
-			)
-			jongItem.setKeyEquivalentModifierMask_(NSControlKeyMask | NSShiftKeyMask)
-			jongItem.setTarget_(self)
-
-			Glyphs.menu[EDIT_MENU].append(toggleItem)
-			Glyphs.menu[EDIT_MENU].append(jongItem)
-			self.toggleItem = toggleItem
-			self.jongItem = jongItem
-		except Exception as e:
-			self.logToConsole("TypeKoreanCJJ Error: %s" % str(e))
+			menuItem.setKeyEquivalentModifierMask_(NSControlKeyMask)
+			menuItem.setTarget_(self)
+			Glyphs.menu[EDIT_MENU].append(menuItem)
+			self.menuItem = menuItem
+		except Exception:
+			log(traceback.format_exc())
 
 	# ------------------------------------------------------------------ menu
 
-	def toggleTyping_(self, sender):
+	def cycleMode_(self, sender):
 		try:
-			if self.enabled:
+			self.mode = MODES[(MODES.index(self.mode) + 1) % len(MODES)]
+			if self.mode == OFF:
 				self.stopMonitor()
 			else:
 				self.startMonitor()
-			self.notifyState()
-		except Exception as e:
-			self.logToConsole("TypeKoreanCJJ toggle error: %s" % str(e))
-
-	def toggleConsonantRole_(self, sender):
-		try:
-			role = jamo_logic.CHO if self.consonantRole() == jamo_logic.JONG else jamo_logic.JONG
-			Glyphs.defaults[CONSONANT_ROLE_KEY] = role
-			self.previous = None
-			self.notifyState()
-		except Exception as e:
-			self.logToConsole("TypeKoreanCJJ role error: %s" % str(e))
+			self.resetCombine()
+			Glyphs.showNotification(self.name, self.modeNames[self.mode])
+		except Exception:
+			log(traceback.format_exc())
 
 	def validateMenuItem_(self, menuItem):
 		try:
-			if menuItem == self.toggleItem:
-				menuItem.setState_(NSOnState if self.enabled else NSOffState)
-			elif menuItem == self.jongItem:
-				isJong = self.consonantRole() == jamo_logic.JONG
-				menuItem.setState_(NSOnState if isJong else NSOffState)
+			if self.mode == OFF:
+				menuItem.setTitle_(self.name)
+				menuItem.setState_(NSOffState)
+			else:
+				menuItem.setTitle_("%s: %s" % (self.name, self.modeNames[self.mode]))
+				menuItem.setState_(NSOnState)
 		except Exception:
 			pass
 		return True
-
-	@objc.python_method
-	def consonantRole(self):
-		role = Glyphs.defaults[CONSONANT_ROLE_KEY]
-		return jamo_logic.JONG if role == jamo_logic.JONG else jamo_logic.CHO
-
-	@objc.python_method
-	def notifyState(self):
-		if not self.enabled:
-			state = Glyphs.localize({"en": "Off", "ko": "꺼짐"})
-		elif self.consonantRole() == jamo_logic.JONG:
-			state = Glyphs.localize({"en": "On — consonants as Jongseong", "ko": "켜짐 — 자음은 종성"})
-		else:
-			state = Glyphs.localize({"en": "On — consonants as Choseong", "ko": "켜짐 — 자음은 초성"})
-		Glyphs.showNotification(self.name, state)
 
 	# ------------------------------------------------------------------ key handling
 
@@ -130,75 +108,74 @@ class TypeKoreanCJJ(GeneralPlugin):
 				NSKeyDownMask | NSLeftMouseDownMask,
 				self.handleEvent
 			)
-		self.enabled = True
-		self.previous = None
 
 	@objc.python_method
 	def stopMonitor(self):
 		if self.monitor is not None:
 			NSEvent.removeMonitor_(self.monitor)
 			self.monitor = None
-		self.enabled = False
+
+	@objc.python_method
+	def resetCombine(self):
 		self.previous = None
+		self.previousTime = None
 
 	@objc.python_method
 	def handleEvent(self, event):
 		if event.type() == NSLeftMouseDown:
 			# a click may move the cursor: never combine across it
-			self.previous = None
+			self.resetCombine()
 			return event
 		return self.handleKeyDown(event)
 
 	@objc.python_method
 	def handleKeyDown(self, event):
+		isJamoKey = False
 		try:
+			if self.mode == OFF:
+				return event
 			if event.modifierFlags() & (NSCommandKeyMask | NSControlKeyMask | NSAlternateKeyMask):
 				return event
 			tab = self.activeTextTab(event)
 			if tab is None:
 				return event
 
-			if self.previous is not None and not self.previousIsBeforeCursor(tab):
-				self.previous = None
+			isJamoKey = event.keyCode() in jamo_logic.KEYCODE_JAMO
+			now = event.timestamp()
+			previous = self.previous if jamo_logic.withinCombineWindow(self.previousTime, now) else None
 
 			shift = bool(event.modifierFlags() & NSShiftKeyMask)
-			previous = self.previous[:2] if self.previous is not None else None
-			result = jamo_logic.resolve(event.keyCode(), shift, self.consonantRole(), previous)
+			result = jamo_logic.resolve(event.keyCode(), shift, self.mode, previous)
 			if result is None:
-				self.previous = None
+				self.resetCombine()
 				return event
 
 			kind, role, jamo, cp = result
 			if kind == jamo_logic.REJECT:
+				self.resetCombine()
 				NSBeep()
 				return None
 
-			glyph = self.glyphForCodepoint(Glyphs.font, cp)
+			font = Glyphs.font
+			glyph = self.glyphForCodepoint(font, cp)
 			if glyph is None:
+				self.resetCombine()
 				NSBeep()
-				self.logToConsole("TypeKoreanCJJ: no glyph for U+%04X (%s, %s)" % (cp, jamo, role))
+				log("no glyph for U+%04X (%s, %s)" % (cp, jamo, role))
 				return None
 
-			self.insertGlyph(tab, glyph, replace=(kind == jamo_logic.REPLACE))
-			self.previous = (role, jamo, cp)
+			self.insert(tab, font, glyph, cp, replace=(kind == jamo_logic.REPLACE))
+			self.previous = (role, jamo)
+			self.previousTime = now
 			return None
-		except Exception as e:
-			self.logToConsole("TypeKoreanCJJ key error: %s" % str(e))
-			return event
-
-	@objc.python_method
-	def previousIsBeforeCursor(self, tab):
-		"""True if the glyph right before the cursor is the jamo this plugin inserted last."""
-		expected = "%04X" % self.previous[2]
-		try:
-			cursor = tab.textCursor
-			found = tab.layers[cursor - 1].parent.unicode if cursor > 0 else None
 		except Exception:
-			return True  # can't tell: don't break combining
-		if found is not None and found.upper() == expected:
-			return True
-		self.logToConsole("TypeKoreanCJJ: combine reset, expected U+%s before cursor, found %s" % (expected, found))
-		return False
+			log(traceback.format_exc())
+			self.resetCombine()
+			if isJamoKey:
+				# never let a jamo key fall through to the input method while the mode is on
+				NSBeep()
+				return None
+			return event
 
 	@objc.python_method
 	def activeTextTab(self, event):
@@ -225,21 +202,40 @@ class TypeKoreanCJJ(GeneralPlugin):
 		return glyph
 
 	@objc.python_method
-	def insertGlyph(self, tab, glyph, replace=False):
-		font = Glyphs.font
+	def insert(self, tab, font, glyph, cp, replace=False):
+		"""Type the jamo the same way a key press would, replacing the previous character when combining."""
+		if "%04X" % cp not in (glyph.unicodes or []):
+			# glyph found by name only: the character would not map to it, so place the layer directly
+			self.insertLayer(tab, font, glyph, replace)
+			return
+
+		graphicView = tab.graphicView()
+		cursor = graphicView.selectedRange().location
+		if replace and cursor > 0:
+			replacement = NSMakeRange(cursor - 1, 1)
+		else:
+			replacement = NSMakeRange(NSNotFound, 0)  # current selection
+
+		if graphicView.respondsToSelector_("insertText:replacementRange:"):
+			graphicView.insertText_replacementRange_(chr(cp), replacement)
+		else:
+			if replacement.location != NSNotFound:
+				graphicView.setSelectedRange_(replacement)
+			graphicView.insertText_(chr(cp))
+
+	@objc.python_method
+	def insertLayer(self, tab, font, glyph, replace):
 		layer = glyph.layers[font.selectedFontMaster.id]
 		layers = list(tab.layers)
-		cursor = tab.textCursor
+		cursor = tab.layersCursor
 		if replace and cursor > 0:
 			layers[cursor - 1] = layer
 			newCursor = cursor
 		else:
-			del layers[cursor:cursor + tab.textRange]
 			layers.insert(cursor, layer)
 			newCursor = cursor + 1
 		tab.layers = layers
-		tab.textRange = 0
-		tab.textCursor = newCursor
+		tab.layersCursor = newCursor
 
 	@objc.python_method
 	def __file__(self):

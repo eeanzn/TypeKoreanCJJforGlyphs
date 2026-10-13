@@ -82,6 +82,9 @@ JONG_COMBOS = {
 	("ㅂ", "ㅅ"): "ㅄ",
 }
 
+# Compound vowels / finals combine only when the second key follows within this many seconds
+COMBINE_WINDOW = 0.4
+
 # Result kinds
 INSERT = "insert"    # insert a new glyph at the cursor
 REPLACE = "replace"  # replace the glyph just before the cursor (compound vowel / final)
@@ -133,3 +136,8 @@ def resolve(keyCode, shift, consonantRole, previous=None):
 	if cp is None:
 		return (REJECT, role, jamo, None)
 	return (INSERT, role, jamo, cp)
+
+
+def withinCombineWindow(previousTime, now, window=COMBINE_WINDOW):
+	"""True if a key at `now` is close enough to the previous jamo key to combine with it."""
+	return previousTime is not None and 0 <= now - previousTime <= window
