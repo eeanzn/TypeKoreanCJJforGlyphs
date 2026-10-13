@@ -23,7 +23,7 @@ from GlyphsApp import Glyphs, EDIT_MENU
 from GlyphsApp.plugins import GeneralPlugin
 from AppKit import (
 	NSMenuItem, NSOnState, NSOffState, NSEvent, NSBeep,
-	NSKeyDownMask, NSControlKeyMask, NSShiftKeyMask, NSCommandKeyMask, NSAlternateKeyMask,
+	NSKeyDownMask, NSLeftMouseDownMask, NSLeftMouseDown, NSControlKeyMask, NSShiftKeyMask, NSCommandKeyMask, NSAlternateKeyMask,
 )
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -50,8 +50,6 @@ class TypeKoreanCJJ(GeneralPlugin):
 		self.enabled = False
 		self.monitor = None
 		self.previous = None
-		self.expectedCursor = None
-		self.expectedTab = None
 		try:
 			toggleItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
 				self.name,
@@ -129,8 +127,8 @@ class TypeKoreanCJJ(GeneralPlugin):
 	def startMonitor(self):
 		if self.monitor is None:
 			self.monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-				NSKeyDownMask,
-				self.handleKeyDown
+				NSKeyDownMask | NSLeftMouseDownMask,
+				self.handleEvent
 			)
 		self.enabled = True
 		self.previous = None
@@ -144,6 +142,14 @@ class TypeKoreanCJJ(GeneralPlugin):
 		self.previous = None
 
 	@objc.python_method
+	def handleEvent(self, event):
+		if event.type() == NSLeftMouseDown:
+			# a click may move the cursor: never combine across it
+			self.previous = None
+			return event
+		return self.handleKeyDown(event)
+
+	@objc.python_method
 	def handleKeyDown(self, event):
 		try:
 			if event.modifierFlags() & (NSCommandKeyMask | NSControlKeyMask | NSAlternateKeyMask):
@@ -152,11 +158,12 @@ class TypeKoreanCJJ(GeneralPlugin):
 			if tab is None:
 				return event
 
-			if tab != self.expectedTab or tab.textCursor != self.expectedCursor or tab.textRange != 0:
+			if self.previous is not None and not self.previousIsBeforeCursor(tab):
 				self.previous = None
 
 			shift = bool(event.modifierFlags() & NSShiftKeyMask)
-			result = jamo_logic.resolve(event.keyCode(), shift, self.consonantRole(), self.previous)
+			previous = self.previous[:2] if self.previous is not None else None
+			result = jamo_logic.resolve(event.keyCode(), shift, self.consonantRole(), previous)
 			if result is None:
 				self.previous = None
 				return event
@@ -173,13 +180,25 @@ class TypeKoreanCJJ(GeneralPlugin):
 				return None
 
 			self.insertGlyph(tab, glyph, replace=(kind == jamo_logic.REPLACE))
-			self.previous = (role, jamo)
-			self.expectedTab = tab
-			self.expectedCursor = tab.textCursor
+			self.previous = (role, jamo, cp)
 			return None
 		except Exception as e:
 			self.logToConsole("TypeKoreanCJJ key error: %s" % str(e))
 			return event
+
+	@objc.python_method
+	def previousIsBeforeCursor(self, tab):
+		"""True if the glyph right before the cursor is the jamo this plugin inserted last."""
+		expected = "%04X" % self.previous[2]
+		try:
+			cursor = tab.textCursor
+			found = tab.layers[cursor - 1].parent.unicode if cursor > 0 else None
+		except Exception:
+			return True  # can't tell: don't break combining
+		if found is not None and found.upper() == expected:
+			return True
+		self.logToConsole("TypeKoreanCJJ: combine reset, expected U+%s before cursor, found %s" % (expected, found))
+		return False
 
 	@objc.python_method
 	def activeTextTab(self, event):
