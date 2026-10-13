@@ -28,24 +28,13 @@ Glyphs 3의 편집창(텍스트 툴)에서 한글 자모를 **초성·중성·�
 2. ⌃R로 초성 모드를 켭니다. (알림과 Edit 메뉴 항목 이름으로 현재 모드가 표시됩니다)
 3. 자모를 칩니다. 자음을 종성으로 넣고 싶으면 ⌃R을 한 번 더 누릅니다.
 4. 한 번 더 누르면 원래 입력으로 돌아갑니다.
-
-⌘·⌃·⌥ 조합 키, 방향키, 스페이스, 리턴, 삭제 등은 그대로 동작합니다. 편집창이 아닌 곳(Font Info 등의 입력란)에서는 키 입력을 가로채지 않습니다.
-
-문제가 생기면 **Window → Macro Panel** 아래쪽 출력 영역에 `TypeKoreanCJJ:`로 시작하는 메시지가 표시됩니다.
 <br>
 <br>
 
 # English
-A typing mode for the Glyphs 3 Edit View (Text tool) that inserts **positional Hangul jamo glyphs** — Choseong (`kiyeokCho-ko`), Jungseong (`aJung-ko`) and Jongseong (`kiyeokJong-ko`) — instead of compatibility jamo, using the Dubeolsik key layout regardless of the active input source.
+A typing mode for the Glyphs 3 Edit View (Text tool) that inserts **positional Hangul syllable glyphs** — Choseong (`kiyeokCho-ko`), Jungseong (`aJung-ko`) and Jongseong (`kiyeokJong-ko`) — instead of compatibility syllable, using the Dubeolsik key layout regardless of the active input source.
 
-- **Edit → Type Hangul Jamo (⌃R)** cycles Off (normal typing) → Choseong → Jongseong → Off. Consonants follow the mode; vowels always insert Jungseong.
+- **Edit → Type Hangul Syllables (⌃R)** cycles Off (normal typing) → Choseong → Jongseong → Off. Consonants follow the mode; vowels always insert Jungseong.
 - Shift gives tense consonants and ㅒ ㅖ; compound vowels and finals combine when the second key follows within 0.4 s (ㅗ+ㅏ → ㅘ, ㄹ+ㄱ → ㄺ).
 - Messages go to Window → Macro Panel.
 - Glyphs 3 only for now.
-
-## Development
-The key mapping and combining logic lives in `Contents/Resources/jamo_logic.py` (no Glyphs dependency) and is tested with:
-
-```
-python3 -m unittest discover -s tests
-```
